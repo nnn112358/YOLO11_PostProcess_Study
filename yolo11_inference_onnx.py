@@ -35,8 +35,7 @@ class YOLOv9:
 
     def __init__(
         self,
-        backbone_path: str,
-        postprocess_path: str,
+        model_path: str,
         original_size: Tuple[int, int] = (640, 640),
         score_threshold: float = 0.1,
         conf_threshold: float = 0.4,
@@ -47,16 +46,15 @@ class YOLOv9:
         YOLOv9検出器を初期化します。
         
         引数:
-            backbone_path: バックボーンのONNXモデルファイルへのパス
-            postprocess_path: ポストプロセスのONNXモデルファイルへのパス
+            model_path: ONNXモデルファイルへのパス
+            class_mapping_path: クラスマッピングYAMLファイルへのパス
             original_size: 元の画像サイズ (width, height)
             score_threshold: 物体検出スコアの閾値
             conf_threshold: 信頼度スコアの閾値
             iou_threshold: NMSにおけるIoUの閾値
             device: 推論を実行するデバイス ("CPU" または "CUDA")
         """
-        self.backbone_path = Path(backbone_path)
-        self.postprocess_path = Path(postprocess_path)
+        self.model_path = Path(model_path)
         self.device = device.upper()
         self.score_threshold = score_threshold
         self.conf_threshold = conf_threshold
@@ -64,7 +62,7 @@ class YOLOv9:
         self.image_width, self.image_height = original_size
         
         # モデルセッションの初期化
-        self._create_sessions()
+        self._create_session()
         
         # 高速処理のための画像サイズ配列を事前計算
         self.input_shape_array = np.array([self.input_width, self.input_height, 
@@ -75,8 +73,8 @@ class YOLOv9:
         # カラーパレットを一度だけ生成
         self.color_palette = np.random.uniform(0, 255, size=(len(self.COCO_CLASSES), 3))
 
-    def _create_sessions(self) -> None:
-        """バックボーンとポストプロセス用のONNXランタイム推論セッションを作成します。"""
+    def _create_session(self) -> None:
+        """ONNXランタイム推論セッションを作成します。"""
         opt_session = onnxruntime.SessionOptions()
         opt_session.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
         
@@ -84,29 +82,19 @@ class YOLOv9:
         if self.device != "CPU":
             providers.insert(0, "CUDAExecutionProvider")
             
-        # バックボーンセッションの作成
-        self.backbone_session = onnxruntime.InferenceSession(
-            str(self.backbone_path), 
-            providers=providers,
-            sess_options=opt_session
-        )
-        
-        # ポストプロセスセッションの作成
-        self.postprocess_session = onnxruntime.InferenceSession(
-            str(self.postprocess_path), 
+        self.session = onnxruntime.InferenceSession(
+            str(self.model_path), 
             providers=providers,
             sess_options=opt_session
         )
         
         # モデルのプロパティをキャッシュ
-        self.backbone_inputs = self.backbone_session.get_inputs()
-        self.backbone_input_names = [input.name for input in self.backbone_inputs]
-        self.input_shape = self.backbone_inputs[0].shape
+        self.model_inputs = self.session.get_inputs()
+        self.input_names = [input.name for input in self.model_inputs]
+        self.input_shape = self.model_inputs[0].shape
         self.input_height, self.input_width = self.input_shape[2:]
         
-        self.backbone_output_names = [output.name for output in self.backbone_session.get_outputs()]
-        self.postprocess_input_names = [input.name for input in self.postprocess_session.get_inputs()]
-        self.postprocess_output_names = [output.name for output in self.postprocess_session.get_outputs()]
+        self.output_names = [output.name for output in self.session.get_outputs()]
 
     @staticmethod
     def _xywh2xyxy(boxes: np.ndarray) -> np.ndarray:
@@ -120,14 +108,17 @@ class YOLOv9:
 
     def preprocess(self, img: np.ndarray) -> np.ndarray:
         """推論のための画像前処理を行います。"""
+        # より効率的な色変換を使用
         if len(img.shape) == 3 and img.shape[2] == 3:
             image_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         else:
             image_rgb = img
             
+        # 高速なリサイズにINTER_LINEARを使用
         resized = cv2.resize(image_rgb, (self.input_width, self.input_height),
                            interpolation=cv2.INTER_LINEAR)
         
+        # 正規化とトランスポーズを1ステップで実行
         input_tensor = resized.transpose(2, 0, 1)[np.newaxis, :, :, :].astype(np.float32) / 255.0
         return input_tensor
 
@@ -173,49 +164,39 @@ class YOLOv9:
 
     def detect(self, img: np.ndarray) -> List[Detection]:
         """入力画像に対して検出を実行します。"""
-        timing = {}
 
+
+        timing = {}
 
         # 前処理の時間計測
         preprocess_start = time.time()
         input_tensor = self.preprocess(img)
         timing['preprocess'] = time.time() - preprocess_start
-        
+
+
         # バックボーンモデルの実行時間計測
-        backbone_start = time.time()
-        backbone_outputs = self.backbone_session.run(
-            self.backbone_output_names,
-            {self.backbone_input_names[0]: input_tensor}
-        )
-        timing['backbone'] = time.time() - backbone_start
-        
-        # ポストプロセスモデルの実行時間計測
-        postprocess_model_start = time.time()
-        postprocess_inputs = dict(zip(self.postprocess_input_names, backbone_outputs))
-        postprocess_outputs = self.postprocess_session.run(
-            self.postprocess_output_names,
-            postprocess_inputs
-        )
-        timing['postprocess_model'] = time.time() - postprocess_model_start
-        
+        outputs_start = time.time()
+        outputs = self.session.run(self.output_names, {self.input_names[0]: input_tensor})[0]
+        timing['outputs'] = time.time() - outputs_start
+
         # 後処理の実行時間計測
         postprocess_start = time.time()
-        detections = self.postprocess(postprocess_outputs[0])
+        detections = self.postprocess(outputs[0])
         timing['postprocess'] = time.time() - postprocess_start
-        
+
         # 合計時間を計算
         timing['total'] = sum(timing.values())
 
         print("\n処理時間の内訳:")
         print(f"前処理時間: {timing['preprocess']:.3f} 秒")
-        print(f"バックボーン推論時間: {timing['backbone']:.3f} 秒")
-        print(f"ポストプロセスモデル時間: {timing['postprocess_model']:.3f} 秒")
+        print(f"outputs推論時間: {timing['outputs']:.3f} 秒")
         print(f"後処理時間: {timing['postprocess']:.3f} 秒")
         print(f"合計時間: {timing['total']:.3f} 秒")
-    
 
-        # 後処理を実行
         return detections
+
+
+
 
     def draw_detections(self, img: np.ndarray, detections: List[Detection]) -> np.ndarray:
         """検出結果を画像に描画します。"""
@@ -251,13 +232,14 @@ class YOLOv9:
                 cv2.LINE_AA
             )
             
+            # 検出結果をコンソールに表示
             print(f"検出: {det.class_name}, 信頼度: {det.confidence:.2f}, 位置: ({x1}, {y1}, {x2}, {y2})")
             
         return img_copy
 
+
 if __name__ == "__main__":
-    backbone_path = "yolo11n_cut_backbone.onnx"
-    postprocess_path = "yolo11n_cut_postproces.onnx"
+    weight_path = "yolo11n.onnx"
     image_path = "./test.jpg"
     
     # 検出器の読み込みと初期化
@@ -267,8 +249,7 @@ if __name__ == "__main__":
         
     h, w = image.shape[:2]
     detector = YOLOv9(
-        backbone_path=backbone_path,
-        postprocess_path=postprocess_path,
+        model_path=weight_path,
         original_size=(w, h)
     )
     
@@ -278,12 +259,20 @@ if __name__ == "__main__":
     inference_time = time.time() - start_time
     print(f"推論時間: {inference_time:.3f} 秒")
     
+
+
+
     # 結果の描画と表示
     result_image = detector.draw_detections(image, detections)
     
+   # 画像を1/2サイズに縮小
+   # display_height = result_image.shape[0] // 2
+   # display_width = result_image.shape[1] // 2
+   # display_image = cv2.resize(result_image, (display_width, display_height))
 
 
     cv2.imshow("yolov9", result_image)
-    cv2.imwrite("yolo11n_split.jpg", result_image)
+    cv2.imwrite("yolo11n_out.jpg", result_image)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+
