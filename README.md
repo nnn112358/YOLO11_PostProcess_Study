@@ -20,6 +20,7 @@ python test_onnx_inference_yolo11n_cut_all.py
 python test_onnx_inference_yolo11n_cut_postproces.py
 ```
 
+![image](https://github.com/user-attachments/assets/3f8e983d-6a30-4d82-bc5f-ef343b8d6ab7)
 
 ```
 $ python yolo11_inference_onnx.py
