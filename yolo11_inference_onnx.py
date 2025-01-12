@@ -142,8 +142,9 @@ class YOLOv9:
         boxes = predictions[:, :4]
         boxes = np.divide(boxes, self.input_shape_array, dtype=np.float32)
         boxes *= self.output_shape_array
-        boxes = boxes.astype(np.int32)
-        
+        #boxes = boxes.astype(np.int32)
+
+
         # NMSの適用
         indices = cv2.dnn.NMSBoxes(
             boxes, scores,
@@ -151,6 +152,10 @@ class YOLOv9:
             nms_threshold=self.iou_threshold
         )
         
+        for i in indices:
+            box=self._xywh2xyxy(boxes[i:i+1])[0]
+            print("\n変換後のboxes:", box)
+
         # 検出オブジェクトの作成
         return [
             Detection(

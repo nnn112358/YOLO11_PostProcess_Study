@@ -151,7 +151,7 @@ class YOLOv9:
         boxes = predictions[:, :4]
         boxes = np.divide(boxes, self.input_shape_array, dtype=np.float32)
         boxes *= self.output_shape_array
-        boxes = boxes.astype(np.int32)
+#        boxes = boxes.astype(np.int32)
         
         # NMSの適用
         indices = cv2.dnn.NMSBoxes(

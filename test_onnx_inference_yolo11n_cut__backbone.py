@@ -48,8 +48,8 @@ if __name__ == "__main__":
         print(f"Output {i} shape:", output.shape)
 
 
-    save_dir = "model_outputs"
 # 追加した保存機能部分
+    save_dir = "model_outputs"
     # 出力の保存
     if save_dir is not None:
         os.makedirs(save_dir, exist_ok=True)
