@@ -1,10 +1,24 @@
-onnx2json -if  yolo11n_post_without_weights.onnx -oj  yolo11n_post_without_weights.json -i 4
-onnx2json -if  yolov8n_post_without_weights.onnx -oj  yolov8n_post_without_weights.json -i 4
-onnx2json -if  yolov9t_post_without_weights.onnx -oj  yolov9t_post_without_weights.json -i 4
-onnx2json -if  yolov10n_post_without_weights.onnx -oj  yolov10n_post_without_weights.json -i 4
+## 目的
+
+YOLO11の量子化のための、Post処理の検証用。
 
 
- python onnx_clear_wight.py yolo11n_post.onnx
- python onnx_clear_wight.py yolov8n_post.onnx
- python onnx_clear_wight.py yolov9t_post.onnx
- python onnx_clear_wight.py yolov10n_post.onnx
+yolo11n.onnx -> yolo11n_cut_backbone.onnx + yolo11n_cut_postproces.onnx
+
+```
+python yolo11_cut-onnx.py
+```
+
+```
+python test_onnx_inference_yolo11n_cut__backbone.py
+python test_onnx_inference_yolo11n_cut_all.py
+python test_onnx_inference_yolo11n_cut_postproces.py
+```
+
+```
+python　yolo11_inference.py
+```
+
+```
+python　yolo11_inference_split_onnx.py
+```
